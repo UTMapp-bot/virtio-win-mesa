@@ -31,6 +31,108 @@ static const GUID *const device_tiers[] = {
    NULL,
 };
 
+/* Successful host CheckFormatSupport results, cached per format. */
+struct npt_d3d11_device_aux {
+   mtx_t cache_mutex;
+   UINT format_support[256];
+   uint8_t format_support_valid[256];
+};
+
+static void
+npt_d3d11_device_aux_destroy(void *aux_raw)
+{
+   struct npt_d3d11_device_aux *aux = aux_raw;
+   if (!aux)
+      return;
+   mtx_destroy(&aux->cache_mutex);
+   free(aux);
+}
+
+static void
+npt_d3d11_device_aux_init(struct npt_com_base *com, struct npt_device *dev,
+                          uint64_t host_id)
+{
+   (void)dev; (void)host_id;
+   struct npt_d3d11_device_aux *aux = com->aux;
+   mtx_init(&aux->cache_mutex, mtx_plain);
+   com->aux_destroy = npt_d3d11_device_aux_destroy;
+}
+
+static struct npt_d3d11_device_aux *
+dev_aux(void *self)
+{
+   return npt_com_family_aux(self, npt_d3d11_device_aux_destroy);
+}
+
+/*
+ * CreateTexture is asynchronous on the single-ring path, so a host-side
+ * create failure cannot be reported back after submission.  Ask the active
+ * host backend for format support before the first create and cache successful
+ * answers.  A failed capability query is treated as unsupported rather than
+ * forwarding an object that may never exist.
+ */
+static bool
+dev_texture_format_supported(void *self, DXGI_FORMAT format,
+                             UINT required_support)
+{
+   if (format == DXGI_FORMAT_UNKNOWN)
+      return true;
+
+   struct npt_d3d11_device_aux *aux = dev_aux(self);
+   const unsigned idx = (unsigned)format;
+   UINT support = 0;
+
+   if (aux && idx < 256u) {
+      mtx_lock(&aux->cache_mutex);
+      const bool valid = aux->format_support_valid[idx] != 0;
+      if (valid)
+         support = aux->format_support[idx];
+      mtx_unlock(&aux->cache_mutex);
+
+      if (valid)
+         return (support & required_support) == required_support;
+   }
+
+   const HRESULT hr =
+      npt_id3d11device_default_CheckFormatSupport(self, format, &support);
+
+   if (NPT_FAILED(hr)) {
+      npt_log("CreateTexture: CheckFormatSupport(%u) failed 0x%08x; refused",
+              idx, (unsigned)hr);
+      return false;
+   }
+
+   if (aux && idx < 256u) {
+      mtx_lock(&aux->cache_mutex);
+      aux->format_support[idx] = support;
+      aux->format_support_valid[idx] = 1;
+      mtx_unlock(&aux->cache_mutex);
+   }
+
+   const bool supported =
+      (support & required_support) == required_support;
+
+   if (!supported)
+      npt_log("CreateTexture: format %u support=0x%08x lacks 0x%08x; refused",
+              idx, support, required_support);
+
+   return supported;
+}
+
+static HRESULT
+dev_refuse_unsupported_texture(void *self, DXGI_FORMAT format,
+                               UINT required_support, void **out_resource)
+{
+   if (dev_texture_format_supported(self, format, required_support))
+      return NPT_S_OK;
+
+   if (out_resource)
+      *out_resource = NULL;
+
+   /* Match Triton's behaviour for a texture format the host cannot make. */
+   return NPT_E_OUTOFMEMORY;
+}
+
 /* A DYNAMIC buffer the host can rename onto guest shmems
  * (npt_d3d11_buffer_set_external_eligible).  Small ones stay on the map
  * ring: what sharing saves is the host copy of the whole buffer at each
@@ -226,6 +328,14 @@ dev_CreateTexture1D_override(void *self,
                               const D3D11_SUBRESOURCE_DATA *pInitialData,
                               ID3D11Texture1D **ppTexture1D)
 {
+   if (pDesc) {
+      HRESULT format_hr = dev_refuse_unsupported_texture(
+         self, pDesc->Format, D3D11_FORMAT_SUPPORT_TEXTURE1D,
+         (void **)ppTexture1D);
+      if (NPT_FAILED(format_hr))
+         return format_hr;
+   }
+
    struct npt_device *dev = npt_com_self_device(self);
    uint64_t self_id = npt_com_self_id(self);
 
@@ -271,6 +381,14 @@ dev_CreateTexture2D_override(void *self,
                               const D3D11_SUBRESOURCE_DATA *pInitialData,
                               ID3D11Texture2D **ppTexture2D)
 {
+   if (pDesc) {
+      HRESULT format_hr = dev_refuse_unsupported_texture(
+         self, pDesc->Format, D3D11_FORMAT_SUPPORT_TEXTURE2D,
+         (void **)ppTexture2D);
+      if (NPT_FAILED(format_hr))
+         return format_hr;
+   }
+
    struct npt_device *dev = npt_com_self_device(self);
    uint64_t self_id = npt_com_self_id(self);
 
@@ -316,6 +434,14 @@ dev_CreateTexture3D_override(void *self,
                               const D3D11_SUBRESOURCE_DATA *pInitialData,
                               ID3D11Texture3D **ppTexture3D)
 {
+   if (pDesc) {
+      HRESULT format_hr = dev_refuse_unsupported_texture(
+         self, pDesc->Format, D3D11_FORMAT_SUPPORT_TEXTURE3D,
+         (void **)ppTexture3D);
+      if (NPT_FAILED(format_hr))
+         return format_hr;
+   }
+
    struct npt_device *dev = npt_com_self_device(self);
    uint64_t self_id = npt_com_self_id(self);
 
@@ -362,6 +488,14 @@ dev3_CreateTexture2D1_override(void *self,
                                const D3D11_SUBRESOURCE_DATA *pInitialData,
                                ID3D11Texture2D1 **ppTexture2D)
 {
+   if (pDesc1) {
+      HRESULT format_hr = dev_refuse_unsupported_texture(
+         self, pDesc1->Format, D3D11_FORMAT_SUPPORT_TEXTURE2D,
+         (void **)ppTexture2D);
+      if (NPT_FAILED(format_hr))
+         return format_hr;
+   }
+
    struct npt_device *dev = npt_com_self_device(self);
    uint64_t self_id = npt_com_self_id(self);
 
@@ -406,6 +540,14 @@ dev3_CreateTexture3D1_override(void *self,
                                const D3D11_SUBRESOURCE_DATA *pInitialData,
                                ID3D11Texture3D1 **ppTexture3D)
 {
+   if (pDesc1) {
+      HRESULT format_hr = dev_refuse_unsupported_texture(
+         self, pDesc1->Format, D3D11_FORMAT_SUPPORT_TEXTURE3D,
+         (void **)ppTexture3D);
+      if (NPT_FAILED(format_hr))
+         return format_hr;
+   }
+
    struct npt_device *dev = npt_com_self_device(self);
    uint64_t self_id = npt_com_self_id(self);
 
@@ -537,5 +679,7 @@ npt_overrides_d3d11_device_init(void)
    NPT_REGISTER_OVERRIDE(id3d11device4, UnregisterDeviceRemoved,
                                        dev4_UnregisterDeviceRemoved_override);
 
-   npt_com_register_family(device_tiers, 0, NULL);
+   npt_com_register_family(device_tiers,
+                           sizeof(struct npt_d3d11_device_aux),
+                           npt_d3d11_device_aux_init);
 }
