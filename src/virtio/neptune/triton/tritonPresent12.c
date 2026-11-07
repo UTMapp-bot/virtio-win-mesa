@@ -25,19 +25,27 @@
 #include "tritonPresentTiming.h"
 
 void
-triton12DeallocateKM(PTRITON12_DEVICE p, D3DKMT_HANDLE *phAllocation)
+triton12DeallocateKM(PTRITON12_DEVICE p, HANDLE hRTResource,
+                     D3DKMT_HANDLE *phAllocation)
 {
     if (!p || !phAllocation || !*phAllocation)
         return;
     if (p->pUMCallbacks && p->pUMCallbacks->pfnDeallocateCb) {
+        /* D3DDDICB_DEALLOCATE: a non-NULL hResource releases the
+         * allocations associated with that resource (NumAllocations and
+         * HandleList are ignored); HandleList is for allocations minted
+         * without one, which this driver never makes. */
         D3D12DDICB_DEALLOCATE_0022 da;
         memset(&da, 0, sizeof(da));
-        da.NumAllocations = 1;
-        da.HandleList     = phAllocation;
+        da.hResource = hRTResource;
+        if (!hRTResource) {
+            da.NumAllocations = 1;
+            da.HandleList     = phAllocation;
+        }
         HRESULT hr = p->pUMCallbacks->pfnDeallocateCb(p->hRTDevice, &da);
         if (FAILED(hr))
-            TR_LOG("12.dealloc: pfnDeallocateCb(alloc=0x%x) failed 0x%08lx",
-                   *phAllocation, (unsigned long)hr);
+            TR_LOG("12.dealloc: pfnDeallocateCb(alloc=0x%x res=%p) failed 0x%08lx",
+                   *phAllocation, hRTResource, (unsigned long)hr);
     }
     *phAllocation = 0;
 }
@@ -95,8 +103,10 @@ triton12RegisterSharedBlob(PTRITON12_DEVICE p, PTRITON12_RESOURCE r,
                (unsigned long)hr);
         return FALSE;
     }
-    /* A residency-only placeholder being replaced by the real export. */
-    triton12DeallocateKM(p, &r->hKMAllocation);
+    /* A residency-only placeholder (or an earlier export) being replaced
+     * by the real export.  It is not freed here: the runtime only frees
+     * by resource, which would take the new allocation too.  It stays
+     * associated with the resource and goes with it at destroy. */
     r->hKMAllocation = ai.hAllocation;
     tritonKmRequestResidency(&p->Km, ai.hAllocation);
     TR_LOG_HOT("12.shared: exporter blob_id=0x%llx alloc=0x%x %llux%u primary=%d",
