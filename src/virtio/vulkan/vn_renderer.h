@@ -87,6 +87,12 @@ struct vn_renderer_info {
 };
 
 struct vn_renderer_submit_batch {
+#ifdef VK_USE_PLATFORM_WIN32_KHR
+   /* Primary BOs to fence implicitly */
+   struct vn_renderer_bo *const *bos;
+   uint32_t bo_count;
+#endif
+
    const void *cs_data;
    size_t cs_size;
 

@@ -127,6 +127,12 @@ vn_ring_submit_command_simple(struct vn_ring *ring,
 VkResult
 vn_ring_submit_roundtrip(struct vn_ring *ring, uint64_t *roundtrip_seqno);
 
+#ifdef VK_USE_PLATFORM_WIN32_KHR
+VkResult
+vn_ring_submit_roundtrip2(struct vn_ring *ring, uint64_t *roundtrip_seqno,
+                          uint32_t bo_count, struct vn_renderer_bo *const *bos);
+#endif
+
 void
 vn_ring_wait_roundtrip(struct vn_ring *ring, uint64_t roundtrip_seqno);
 
@@ -137,5 +143,17 @@ vn_ring_roundtrip(struct vn_ring *ring)
    if (vn_ring_submit_roundtrip(ring, &roundtrip_seqno) == VK_SUCCESS)
       vn_ring_wait_roundtrip(ring, roundtrip_seqno);
 }
+
+#ifdef VK_USE_PLATFORM_WIN32_KHR
+static inline void
+vn_ring_roundtrip2(struct vn_ring *ring, uint32_t bo_count,
+                   struct vn_renderer_bo *const *bos)
+{
+   uint64_t roundtrip_seqno;
+   if (vn_ring_submit_roundtrip2(ring, &roundtrip_seqno,
+                                 bo_count, bos) == VK_SUCCESS)
+      vn_ring_wait_roundtrip(ring, roundtrip_seqno);
+}
+#endif
 
 #endif /* VN_RING_H */

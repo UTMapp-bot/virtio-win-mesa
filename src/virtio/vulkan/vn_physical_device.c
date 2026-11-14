@@ -449,6 +449,11 @@ vn_physical_device_init_features(struct vn_physical_device *physical_dev)
     */
    feats->deviceMemoryReport = true;
 
+    /* VK_EXT_frame_boundary */
+   if (supported_exts->EXT_frame_boundary) {
+      feats->frameBoundary = true;
+   }
+
    /* VK_EXT_map_memory_placed */
    if (supported_exts->EXT_map_memory_placed) {
       feats->memoryMapPlaced = true;
@@ -1175,6 +1180,7 @@ vn_physical_device_get_native_extensions(
 
 #ifdef VK_USE_PLATFORM_WIN32_KHR
    exts->KHR_external_semaphore_win32 = true;
+   exts->EXT_frame_boundary = true;
 #endif
 
 #ifdef VK_USE_PLATFORM_ANDROID_KHR

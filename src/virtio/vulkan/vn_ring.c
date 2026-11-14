@@ -786,6 +786,36 @@ vn_ring_submit_roundtrip(struct vn_ring *ring, uint64_t *roundtrip_seqno)
    return result;
 }
 
+#ifdef VK_USE_PLATFORM_WIN32_KHR
+VkResult
+vn_ring_submit_roundtrip2(struct vn_ring *ring, uint64_t *roundtrip_seqno,
+                          uint32_t bo_count, struct vn_renderer_bo *const *bos)
+{
+   uint32_t local_data[8];
+   struct vn_cs_encoder local_enc =
+      VN_CS_ENCODER_INITIALIZER_LOCAL(local_data, sizeof(local_data));
+
+   mtx_lock(&ring->roundtrip_mutex);
+   const uint64_t seqno = ring->roundtrip_next++;
+   vn_encode_vkSubmitVirtqueueSeqnoMESA(&local_enc, 0, ring->id, seqno);
+
+   const struct vn_renderer_submit_batch batch = {
+      .bos = bos,
+      .bo_count = bo_count,
+      .cs_data = local_data,
+      .cs_size = vn_cs_encoder_get_len(&local_enc),
+      .ring_idx = 0,
+   };
+
+   VkResult result = vn_renderer_submit(ring->instance->renderer, &batch);
+
+   mtx_unlock(&ring->roundtrip_mutex);
+
+   *roundtrip_seqno = seqno;
+   return result;
+}
+#endif
+
 void
 vn_ring_wait_roundtrip(struct vn_ring *ring, uint64_t roundtrip_seqno)
 {

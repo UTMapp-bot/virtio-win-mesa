@@ -25,6 +25,7 @@ struct vn_queue_submission_pnext {
    /* intercepted structs */
    VkDeviceGroupSubmitInfo group;
    VkTimelineSemaphoreSubmitInfo timeline;
+   VkFrameBoundaryEXT frame_boundary;
 
    /* forwarded structs */
    VkDeviceGroupBindSparseInfo sparse;
@@ -347,6 +348,26 @@ vn_get_signal_semaphore_counter(struct vn_queue_submission *submit,
    }
 }
 
+#ifdef VK_USE_PLATFORM_WIN32_KHR
+static const VkFrameBoundaryEXT *
+vn_get_frame_boundary(struct vn_queue_submission *submit)
+{
+   switch (submit->batch_type) {
+   case VK_STRUCTURE_TYPE_SUBMIT_INFO: {
+      return vk_find_struct_const(submit->submit_batch, FRAME_BOUNDARY_EXT);
+   }
+   case VK_STRUCTURE_TYPE_SUBMIT_INFO_2:
+      return vk_find_struct_const(submit->submit2_batch, FRAME_BOUNDARY_EXT);
+   case VK_STRUCTURE_TYPE_BIND_SPARSE_INFO: {
+      /* don't expect to see it here */
+      return NULL;
+   }
+   default:
+      UNREACHABLE("unexpected batch type");
+   }
+}
+#endif
+
 static bool
 vn_is_batch_empty(struct vn_queue_submission *submit)
 {
@@ -510,6 +531,10 @@ vn_queue_submission_init_pnext(struct vn_queue_submission *submit)
 
          break;
       }
+      case VK_STRUCTURE_TYPE_FRAME_BOUNDARY_EXT:
+         memcpy(&pnext->frame_boundary, src, sizeof(pnext->frame_boundary));
+         /* handled by venus inside guest */
+         break;
       case VK_STRUCTURE_TYPE_DEVICE_GROUP_BIND_SPARSE_INFO:
          memcpy(&pnext->sparse, src, sizeof(pnext->sparse));
          next = &pnext->sparse;
@@ -521,7 +546,7 @@ vn_queue_submission_init_pnext(struct vn_queue_submission *submit)
       default:
          /* The following structs are not supported by venus so are not
           * handled here. VkAmigoProfilingSubmitInfoSEC,
-          * VkD3D12FenceSubmitInfoKHR, VkFrameBoundaryEXT,
+          * VkD3D12FenceSubmitInfoKHR,
           * VkLatencySubmissionPresentIdNV, VkPerformanceQuerySubmitInfoKHR,
           * VkWin32KeyedMutexAcquireReleaseInfoKHR,
           * VkWin32KeyedMutexAcquireReleaseInfoNV
@@ -1342,14 +1367,32 @@ vn_queue_submit(struct vn_queue_submission *submit)
    struct vn_device *dev = vn_device_from_vk(queue->base.vk.base.device);
    VkResult result;
 
-#ifdef VK_USE_PLATFORM_WIN32_KHR
-   if (dev->renderer->info.needs_implicit_queue_sync)
-      vn_ring_roundtrip(dev->primary_ring);
-#endif
-
    result = vn_queue_submission_prepare_submit(submit);
    if (result != VK_SUCCESS)
       return vn_error(dev->instance, result);
+
+#ifdef VK_USE_PLATFORM_WIN32_KHR
+   const VkFrameBoundaryEXT *frame_boundary = vn_get_frame_boundary(submit);
+   if (frame_boundary && frame_boundary->imageCount > 0) {
+      uint32_t bo_count = frame_boundary->imageCount;
+      STACK_ARRAY(struct vn_renderer_bo *, bos, bo_count);
+      for (uint32_t i = 0; i < bo_count; i++) {
+         struct vn_image *img =
+            vn_image_from_handle(frame_boundary->pImages[i]);
+         struct vn_device_memory *mem = img ? img->mem : NULL;
+         struct vn_renderer_bo *bo = mem ? mem->base_bo : NULL;
+         bos[i] = bo;
+
+         if (!bo)
+            vn_log(dev->instance,
+                   "WARN: no image %p, mem %p or bo %p", img, mem, bo);
+      }
+
+      vn_ring_roundtrip2(dev->primary_ring, bo_count, bos);
+      STACK_ARRAY_FINISH(bos);
+   } else if (dev->renderer->info.needs_implicit_queue_sync)
+      vn_ring_roundtrip(dev->primary_ring);
+#endif
 
    result = vn_queue_submission_do_submit(submit);
    if (result != VK_SUCCESS)
