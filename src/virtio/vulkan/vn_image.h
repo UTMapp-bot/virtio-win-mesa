@@ -61,6 +61,10 @@ struct vn_image {
       /* memory backing the prime blit dst buffer */
       struct vn_device_memory *blit_mem;
    } wsi;
+#ifdef VK_USE_PLATFORM_WIN32_KHR
+   /* memory bound to this image */
+   struct vn_device_memory *mem;
+#endif
 };
 VK_DEFINE_NONDISP_HANDLE_CASTS(vn_image,
                                base.vk.base,

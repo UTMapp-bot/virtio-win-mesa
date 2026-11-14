@@ -909,6 +909,17 @@ vn_BindImageMemory2(VkDevice device,
    for (uint32_t i = 0; i < bindInfoCount; i++) {
       if (pBindInfos[i].memory == VK_NULL_HANDLE)
          return vn_image_bind_wsi_memory(dev, bindInfoCount, pBindInfos);
+#ifdef VK_USE_PLATFORM_WIN32_KHR
+      else {
+         /* Only used for tracking written primary bos on Windows */
+         struct vn_image *img = vn_image_from_handle(pBindInfos[i].image);
+         struct vn_device_memory *mem =
+            vn_device_memory_from_handle(pBindInfos[i].memory);
+         if (img) {
+             img->mem = mem;
+         }
+      }
+#endif
    }
 
    vn_async_vkBindImageMemory2(dev->primary_ring, device, bindInfoCount,
