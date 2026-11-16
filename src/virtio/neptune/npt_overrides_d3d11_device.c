@@ -31,7 +31,7 @@ static const GUID *const device_tiers[] = {
    NULL,
 };
 
-/* Successful host CheckFormatSupport results, cached per format. */
+/* Host CheckFormatSupport answers, cached per format. */
 struct npt_d3d11_device_aux {
    mtx_t cache_mutex;
    UINT format_support[256];
@@ -67,9 +67,11 @@ dev_aux(void *self)
 /*
  * CreateTexture is asynchronous on the single-ring path, so a host-side
  * create failure cannot be reported back after submission.  Ask the active
- * host backend for format support before the first create and cache successful
- * answers.  A failed capability query is treated as unsupported rather than
- * forwarding an object that may never exist.
+ * host backend for format support before the first create and cache its
+ * answer.  E_FAIL and E_INVALIDARG are how CheckFormatSupport says a format
+ * is unsupported, so they are an answer of no support; any other failure
+ * (device removed, transport) is no answer, is not cached, and lets the
+ * create through to report its own error.
  */
 static bool
 dev_texture_format_supported(void *self, DXGI_FORMAT format,
@@ -96,10 +98,12 @@ dev_texture_format_supported(void *self, DXGI_FORMAT format,
    const HRESULT hr =
       npt_id3d11device_default_CheckFormatSupport(self, format, &support);
 
-   if (NPT_FAILED(hr)) {
-      npt_log("CreateTexture: CheckFormatSupport(%u) failed 0x%08x; refused",
-              idx, (unsigned)hr);
-      return false;
+   if (hr == NPT_E_FAIL || hr == NPT_E_INVALIDARG) {
+      support = 0;
+   } else if (NPT_FAILED(hr)) {
+      npt_log("CreateTexture: CheckFormatSupport(%u) failed 0x%08x; "
+              "not checked", idx, (unsigned)hr);
+      return true;
    }
 
    if (aux && idx < 256u) {
