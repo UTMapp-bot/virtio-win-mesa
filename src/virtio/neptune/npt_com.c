@@ -1104,6 +1104,7 @@ npt_com_init_impl(void)
    npt_overrides_d3d11_context_init();
    npt_overrides_d3d11_buffer_init();
    npt_overrides_d3d11_texture_init();
+   npt_overrides_d3d11_view_init();
    npt_overrides_dxgi_output_init();
    npt_overrides_dxgi_factory_init();
    npt_overrides_dxgi_factorymedia_init();
