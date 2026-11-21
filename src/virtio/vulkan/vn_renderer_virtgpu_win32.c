@@ -1320,22 +1320,22 @@ virtgpu_ioctl_get_caps(struct virtgpu *gpu,
                        void *capset,
                        size_t capset_size)
 {
-   struct {
-      VIRTIO_WDDM_Capset capset;
-      uint8_t caps[capset_size];
-   } caps = {};
+   const size_t caps_size = sizeof(VIRTIO_WDDM_Capset) + capset_size;
+   VIRTIO_WDDM_Capset *caps = calloc(1, caps_size);
+   if (!caps)
+      return STATUS_NO_MEMORY;
 
-   caps.capset = (VIRTIO_WDDM_Capset){
+   *caps = (VIRTIO_WDDM_Capset){
       .tag = VIRTIO_WDDM_ESCAPE_CAPSET_TAG,
       .capset_id = id,
       .version = version,
    };
 
-   NTSTATUS status = virtgpu_ioctl_escape(gpu, NULL, &caps, sizeof(caps));
-   if (!NT_SUCCESS(status)) {
-      return status;
-   }
-   memcpy(capset, caps.caps, capset_size);
+   NTSTATUS status = virtgpu_ioctl_escape(gpu, NULL, caps, caps_size);
+   if (NT_SUCCESS(status))
+      memcpy(capset, caps->capset, capset_size);
+
+   free(caps);
 
    return status;
 }
@@ -1458,10 +1458,12 @@ virtgpu_ioctl_resource_create_blob(struct virtgpu *gpu,
                                    D3DKMT_HANDLE *res_kmt_global,
                                    HANDLE *res_h)
 {
-   struct {
+   /* Kernel does not yet support buffers bigger than
+    * PAGE_SIZE - sizeof(struct virtio_gpu_cmd_submit) */
+   struct res_priv {
       VIRTIO_WDDM_CreateResource resource;
       VIRTIO_WDDM_CommandHeader hdr;
-      uint8_t body[batch ? batch->cs_size : 0];
+      uint8_t body[4096 - 32];
    } res_priv;
    res_priv.resource.tag = VIRTIO_WDDM_CREATE_RESOURCE_TAG;
 
@@ -1470,11 +1472,10 @@ virtgpu_ioctl_resource_create_blob(struct virtgpu *gpu,
    if (batch != NULL && batch->cs_size > 0) {
       /* TODO */
       assert(batch->sync_count == 0);
-      /* Kernel does not yet support buffers bigger than
-       * PAGE_SIZE - sizeof(struct virtio_gpu_cmd_submit) */
-      assert(batch->cs_size <= (4096 - 32));
+      if (batch->cs_size > sizeof(res_priv.body))
+         return STATUS_INVALID_PARAMETER;
 
-      res_priv_size = sizeof(res_priv);
+      res_priv_size = offsetof(struct res_priv, body) + batch->cs_size;
 
       res_priv.hdr.id = VIRTIO_WDDM_COMMAND_ID_SUBMIT;
       res_priv.hdr.flags = VIRTIO_WDDM_COMMAND_FLAG_RING_IDX;
