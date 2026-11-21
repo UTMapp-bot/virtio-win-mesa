@@ -55,7 +55,7 @@ struct virtgpu_bo {
 // #define INDEPENDENT_RENDER_CONTEXT
 
 /* WDDM2.9+ */
-#define HW_CONTEXT
+// #define HW_CONTEXT
 
 #if defined(HW_CONTEXT) && !defined(VIRTUAL_CONTEXT_SUPPORT)
 #error "Cannot support hw physical contexts"
