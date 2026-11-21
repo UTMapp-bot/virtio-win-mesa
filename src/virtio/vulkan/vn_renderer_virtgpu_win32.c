@@ -1720,7 +1720,7 @@ virtgpu_init_context(struct virtgpu *gpu)
       },
    };
 
-   char full_path[PATH_MAX] = {};
+   char full_path[MAX_PATH] = {};
    GetModuleFileNameA(NULL, full_path, sizeof(full_path) - 1);
    char *proc = strrchr(full_path, '\\');
    if (proc != NULL) {
@@ -1906,7 +1906,7 @@ virtgpu_find_adapter(struct virtgpu *gpu)
       return VK_ERROR_INCOMPATIBLE_DRIVER;
    }
 
-   ssize_t virtio_index = -1;
+   int virtio_index = -1;
    for (size_t i = 0; i < adapters.NumAdapters; i++) {
       D3DKMT_QUERY_DEVICE_IDS device_ids = {};
       D3DKMT_QUERYADAPTERINFO query = {
@@ -1946,7 +1946,7 @@ virtgpu_find_adapter(struct virtgpu *gpu)
    free(adapters.pAdapters);
 
    if (VN_DEBUG(INIT)) {
-      vn_log(gpu->instance, "using adapter %zd (LUID %lx-%lx)", virtio_index,
+      vn_log(gpu->instance, "using adapter %d (LUID %lx-%lx)", virtio_index,
              gpu->d3dkmt.luid.HighPart, gpu->d3dkmt.luid.LowPart);
    }
 

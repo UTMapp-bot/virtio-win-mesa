@@ -51,6 +51,9 @@
 
 #if DETECT_OS_WINDOWS
 #include <processthreadsapi.h>
+#ifdef _MSC_VER
+typedef int pid_t;
+#endif
 #else
 #include <sys/syscall.h>
 
